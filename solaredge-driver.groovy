@@ -1,18 +1,13 @@
 /***********************************************************************************************************************
  *
- *  This is a Hubitat device driver which will connect to the Solaredge monitoring API and retrieve inverter, battery
- *  and site overview data.
+ *  Hubitat device driver for SolarEdge Cloud Monitoring API v1.
+ *  Quota-aware polling with last-good value retention.
  *
- *  License:
- *  This program falls under the GNU GENERAL PUBLIC LICENSE Version 3.
- *  For full license visit https://github.com/funzie19/hubitat-solaredge/blob/master/LICENSE
- *
- *  Name: Solaredge Monitoring Driver
- *
+ *  License: GNU GENERAL PUBLIC LICENSE Version 3
  *  Changelog: https://github.com/funzie19/hubitat-solaredge/blob/master/CHANGELOG.md
  *
  ***********************************************************************************************************************/
-private version() { return "1.2.0" }
+private version() { return "2.0.0" }
 
 metadata {
     definition(
@@ -20,615 +15,650 @@ metadata {
         namespace: "funzie19.solaredge",
         author: "Joseph Kregloh",
         importUrl: "https://raw.githubusercontent.com/funzie19/hubitat-solaredge/master/solaredge-driver.groovy",
-        description: "Driver to query the Solaredge API endpoint and return data related to solar production and consumption for a given site."
+        description: "Quota-aware SolarEdge monitoring driver with last-good value retention."
     ) {
-      capability "Power Meter"
-      capability "Battery"
-      capability "Refresh"
-      command "updateTiles"
-      command "getEnergy"
-      command "getOverview"
-      command "getSitePowerFlow"
-      command "clearData"
+        capability "Power Meter"
+        capability "Battery"
+        capability "EnergyMeter"
+        capability "Refresh"
 
-      attribute "production", "number"
-      attribute "consumption", "number"
-      attribute "self_consumption", "number"
-      attribute "feed_in", "number"
-      attribute "purchased", "number"
-      attribute "last_day", "number"
-      attribute "last_month", "number"
-      attribute "last_year", "number"
-      attribute "lifetime", "number"
-      attribute "grid_power", "string"
-      attribute "load_power", "string"
-      attribute "pv_power", "string"
-      
-      // Battery Storage Attributes
-      attribute "storage_status", "string"  // Idle, Charging, Discharging
-      attribute "storage_power", "string"   // Power either coming in (charging) or going out (Discharging), value is positive regardless of direction
-      attribute "storage_charge", "string"  // 51.0 for 51% charge
-      
-      attribute "battery", "number"         // Duplication of storage_charge attribute to align to Battery capability
-        
-      attribute "energy_tile", "string"
-      attribute "overview_tile", "string"
-      attribute "power_flow_tile", "string"
+        command "updateTiles"
+        command "getEnergy"
+        command "getOverview"
+        command "getSitePowerFlow"
+        command "clearData"
+
+        attribute "production", "number"
+        attribute "consumption", "number"
+        attribute "self_consumption", "number"
+        attribute "feed_in", "number"
+        attribute "purchased", "number"
+        attribute "last_day", "number"
+        attribute "last_month", "number"
+        attribute "last_year", "number"
+        attribute "lifetime", "number"
+        attribute "energy", "number"
+        attribute "grid_power", "number"
+        attribute "load_power", "number"
+        attribute "pv_power", "number"
+
+        attribute "storage_status", "string"
+        attribute "storage_direction", "string"
+        attribute "storage_power", "number"
+        attribute "storage_charge", "number"
+        attribute "battery", "number"
+
+        attribute "apiStatus", "string"
+        attribute "apiCallsToday", "number"
+        attribute "dataAge", "number"
+
+        attribute "energy_tile", "string"
+        attribute "overview_tile", "string"
+        attribute "power_flow_tile", "string"
     }
 
     preferences {
-	     section("Configure Solaredge API connection parameters") {
-          input("site_id", "number", title: "Site Id", description: "Site Id to monitor.", required: true)
-          input("api_key", "text", title: "API Key", description: "API key for given site id. This key is generated using installer level permissions. Ask installer to generate key or setup as sub-account with the correct permissions. Or sign up as an installer and take ownership of the inverter.", required: true)
-          input("url", "text", title: "Solaredge Monitor API URL", description: "Endpoint URL for Solaredge Monitoring API.", required: true, defaultValue: "https://monitoringapi.solaredge.com")
+        section("Configure SolarEdge API connection") {
+            input("site_id", "number", title: "Site Id", description: "Site Id to monitor.", required: true)
+            input("api_key", "text", title: "API Key", description: "Installer-generated API key with site access.", required: true)
+            input("url", "text", title: "SolarEdge Monitor API URL", description: "Monitoring API base URL.", required: true, defaultValue: "https://monitoringapi.solaredge.com")
+        }
 
-          input("energy_refresh_interval", "enum", title: "How often to refresh the energy data", options: [
-            255:"Do NOT update",
-            1:"1 Minute",
-            2:"2 Minutes",
-            3:"3 Minutes",
-            4:"4 Minutes",
-            5:"5 Minutes",
-            6:"6 Minutes",
-            7:"7 Minutes",
-            8:"8 Minutes",
-            9:"9 Minutes",
-            10:"10 Minutes",
-            11:"11 Minutes",
-            12:"12 Minutes",
-            13:"13 Minutes",
-            14:"14 Minutes",
-            15:"15 Minutes",
-            16:"16 Minutes",
-            17:"17 Minutes",
-            18:"18 Minutes",
-            19:"19 Minutes",
-            20:"20 Minutes",
-            21:"21 Minutes",
-            22:"22 Minutes",
-            23:"23 Minutes",
-            24:"24 Minutes",
-            25:"25 Minutes",
-            26:"26 Minutes",
-            27:"27 Minutes",
-            28:"28 Minutes",
-            29:"29 Minutes",
-            30:"30 Minutes",
-            31:"31 Minutes",
-            32:"32 Minutes",
-            33:"33 Minutes",
-            34:"34 Minutes",
-            35:"35 Minutes",
-            36:"36 Minutes",
-            37:"37 Minutes",
-            38:"38 Minutes",
-            39:"39 Minutes",
-            40:"40 Minutes",
-            41:"41 Minutes",
-            42:"42 Minutes",
-            43:"43 Minutes",
-            44:"44 Minutes",
-            45:"45 Minutes",
-            46:"46 Minutes",
-            47:"47 Minutes",
-            48:"48 Minutes",
-            49:"49 Minutes",
-            50:"50 Minutes",
-            51:"51 Minutes",
-            52:"52 Minutes",
-            53:"53 Minutes",
-            54:"54 Minutes",
-            55:"55 Minutes",
-            56:"56 Minutes",
-            57:"57 Minutes",
-            58:"58 Minutes",
-            59:"59 Minutes"
-          ], required: true)
-          input("overview_refresh_interval", "enum", title: "How often to refresh the production overview data", options: [
-            255:"Do NOT update",
-            1:"1 Minute",
-            2:"2 Minutes",
-            3:"3 Minutes",
-            4:"4 Minutes",
-            5:"5 Minutes",
-            6:"6 Minutes",
-            7:"7 Minutes",
-            8:"8 Minutes",
-            9:"9 Minutes",
-            10:"10 Minutes",
-            11:"11 Minutes",
-            12:"12 Minutes",
-            13:"13 Minutes",
-            14:"14 Minutes",
-            15:"15 Minutes",
-            16:"16 Minutes",
-            17:"17 Minutes",
-            18:"18 Minutes",
-            19:"19 Minutes",
-            20:"20 Minutes",
-            21:"21 Minutes",
-            22:"22 Minutes",
-            23:"23 Minutes",
-            24:"24 Minutes",
-            25:"25 Minutes",
-            26:"26 Minutes",
-            27:"27 Minutes",
-            28:"28 Minutes",
-            29:"29 Minutes",
-            30:"30 Minutes",
-            31:"31 Minutes",
-            32:"32 Minutes",
-            33:"33 Minutes",
-            34:"34 Minutes",
-            35:"35 Minutes",
-            36:"36 Minutes",
-            37:"37 Minutes",
-            38:"38 Minutes",
-            39:"39 Minutes",
-            40:"40 Minutes",
-            41:"41 Minutes",
-            42:"42 Minutes",
-            43:"43 Minutes",
-            44:"44 Minutes",
-            45:"45 Minutes",
-            46:"46 Minutes",
-            47:"47 Minutes",
-            48:"48 Minutes",
-            49:"49 Minutes",
-            50:"50 Minutes",
-            51:"51 Minutes",
-            52:"52 Minutes",
-            53:"53 Minutes",
-            54:"54 Minutes",
-            55:"55 Minutes",
-            56:"56 Minutes",
-            57:"57 Minutes",
-            58:"58 Minutes",
-            59:"59 Minutes"
-          ], required: true)
-          input("power_flow_refresh_interval", "enum", title: "How often to refresh power flow data", options: [
-            255:"Do NOT update",
-            1:"1 Minute",
-            2:"2 Minutes",
-            3:"3 Minutes",
-            4:"4 Minutes",
-            5:"5 Minutes",
-            6:"6 Minutes",
-            7:"7 Minutes",
-            8:"8 Minutes",
-            9:"9 Minutes",
-            10:"10 Minutes",
-            11:"11 Minutes",
-            12:"12 Minutes",
-            13:"13 Minutes",
-            14:"14 Minutes",
-            15:"15 Minutes",
-            16:"16 Minutes",
-            17:"17 Minutes",
-            18:"18 Minutes",
-            19:"19 Minutes",
-            20:"20 Minutes",
-            21:"21 Minutes",
-            22:"22 Minutes",
-            23:"23 Minutes",
-            24:"24 Minutes",
-            25:"25 Minutes",
-            26:"26 Minutes",
-            27:"27 Minutes",
-            28:"28 Minutes",
-            29:"29 Minutes",
-            30:"30 Minutes",
-            31:"31 Minutes",
-            32:"32 Minutes",
-            33:"33 Minutes",
-            34:"34 Minutes",
-            35:"35 Minutes",
-            36:"36 Minutes",
-            37:"37 Minutes",
-            38:"38 Minutes",
-            39:"39 Minutes",
-            40:"40 Minutes",
-            41:"41 Minutes",
-            42:"42 Minutes",
-            43:"43 Minutes",
-            44:"44 Minutes",
-            45:"45 Minutes",
-            46:"46 Minutes",
-            47:"47 Minutes",
-            48:"48 Minutes",
-            49:"49 Minutes",
-            50:"50 Minutes",
-            51:"51 Minutes",
-            52:"52 Minutes",
-            53:"53 Minutes",
-            54:"54 Minutes",
-            55:"55 Minutes",
-            56:"56 Minutes",
-            57:"57 Minutes",
-            58:"58 Minutes",
-            59:"59 Minutes"
-          ], required: true)
-          input("energy_title", "text", title: "Daily Energy Details Title", description: "Title for energy details tile. Empty value removes title from tile.", required: false)
-          input("overview_title", "text", title: "Production Overview Title", description: "Title for solar produtcion overview tile. Empty value removes title from tile.", required: false)
-          input("power_flow_title", "text", title: "Power Flow Title", description: "Title for current flow overview(PV, load, and grid). Empty value removes title from tile.", required: false)
-          input(name: "display_last_updated", type: "bool", title: "Display last updated timestamp?", defaultValue: false)
-          input(name: "debug", type: "bool", title: "Enable debug logging", defaultValue: false)
-      }
+        section("Polling and quota") {
+            input("polling_intensity", "enum", title: "Polling Intensity", options: [
+                "Low": "~48 API calls/day",
+                "Medium": "~90 API calls/day (recommended)",
+                "High": "~200 API calls/day",
+                "Custom": "Set per-endpoint intervals below"
+            ], defaultValue: "Medium", required: true)
+            input("daily_budget", "number", title: "Daily API call budget", description: "Hard ceiling (SolarEdge limit is 300/day). Max 280.", defaultValue: 150, range: "50..280", required: true)
+            input("night_mode", "bool", title: "Night mode", description: "Suspend real-time polling between sunset and sunrise; retain one post-sunset energy close-out.", defaultValue: true)
+            input("site_timezone", "text", title: "Site timezone (optional)", description: "IANA timezone for site-local day boundary, e.g. America/Los_Angeles. Defaults to hub timezone.", required: false)
+            input("energy_interval_minutes", "number", title: "Energy interval (Custom, minutes)", description: "Used when Polling Intensity is Custom.", defaultValue: 30, range: "15..120")
+            input("overview_interval_minutes", "number", title: "Overview interval (Custom, minutes)", defaultValue: 30, range: "15..120")
+            input("power_flow_interval_minutes", "number", title: "Power flow interval (Custom, minutes)", defaultValue: 15, range: "5..60")
+        }
+
+        section("Dashboard tiles") {
+            input("energy_title", "text", title: "Daily Energy Details Title", required: false)
+            input("overview_title", "text", title: "Production Overview Title", required: false)
+            input("power_flow_title", "text", title: "Power Flow Title", required: false)
+            input(name: "display_last_updated", type: "bool", title: "Display last updated timestamp?", defaultValue: false)
+            input(name: "debug", type: "bool", title: "Enable debug logging (auto-disables after 30 min)", defaultValue: false)
+        }
     }
 }
 
 def installed() {
-	log.info "Solaredge Monitoring has been installed."
-
-  clearData()
-
-  state.version = version()
+    log.info "SolarEdge Monitoring v${version()} installed."
+    initializeState()
+    clearData()
+    state.version = version()
 }
 
 def uninstalled() {
-	if (debug) log.info "Solaredge Monitoring has been uninstalled."
-
-  unschedule(refresh)
-  unschedule(queryEnergyEndpoint)
-  unschedule(queryOverviewEndpoint)
-  unschedule(querySitePowerFlowEndpoint)
-}
-
-def refresh() {
-
-  if (debug) log.debug "Solaredge API is being queried."
-
-  queryEnergyEndpoint()
-  queryOverviewEndpoint()
-  querySitePowerFlowEndpoint()
-
-  updateTiles()
+    unschedule()
 }
 
 def updated() {
+    if (dbg()) log.debug "Settings updated."
+    initializeState()
+    unschedule()
+    atomicState.authHalted = false
+    atomicState.nightEnergyDone = false
 
-  if (debug) {
-      log.debug "Settings updated."
-  }
+    if (!settings.site_id || !settings.api_key) {
+        log.warn "Site Id and API Key are required before polling can start."
+        return
+    }
 
-  unschedule(refresh)
-  unschedule(queryEnergyEndpoint)
-  unschedule(queryOverviewEndpoint)
-  unschedule(querySitePowerFlowEndpoint)
+    schedule("10 */5 * ? * *", "pollDispatcher")
+    if (settings.debug) {
+        state.debugLogging = true
+        runIn(1800, "logsOff")
+    }
+    pollDispatcher()
+    state.version = version()
+}
 
-  if( settings.energy_refresh_interval != "255") schedule("0 */${settings.energy_refresh_interval} * ? * * *", queryEnergyEndpoint)
-  if( settings.overview_refresh_interval != "255") schedule("0 */${settings.overview_refresh_interval} * ? * * *", queryOverviewEndpoint)
-  if( settings.power_flow_refresh_interval != "255") schedule("0 */${settings.power_flow_refresh_interval} * ? * * *", querySitePowerFlowEndpoint)
+def logsOff() {
+    state.debugLogging = false
+    log.info "Debug logging auto-disabled after 30 minutes."
+}
 
-  updateTiles()
-
-  state.version = version()
+def refresh() {
+    if (atomicState.authHalted) {
+        log.warn "Polling halted (auth_failed) — fix API key and save preferences."
+        return
+    }
+    if (dbg()) log.debug "Manual refresh requested."
+    if (spendCall("energy")) queryEnergyEndpoint()
+    if (spendCall("overview")) queryOverviewEndpoint()
+    if (spendCall("powerFlow")) querySitePowerFlowEndpoint()
+    updateTiles()
 }
 
 def getEnergy() {
-  queryEnergyEndpoint()
-  updateTiles()
+    if (spendCall("energy")) queryEnergyEndpoint()
+    updateTiles()
 }
 
 def getOverview() {
-  queryOverviewEndpoint()
-  updateTiles()
+    if (spendCall("overview")) queryOverviewEndpoint()
+    updateTiles()
 }
 
 def getSitePowerFlow() {
-  querySitePowerFlowEndpoint()
-  updateTiles()
+    if (spendCall("powerFlow")) querySitePowerFlowEndpoint()
+    updateTiles()
 }
 
-def clearData()
-{
-  if (debug) log.debug "Deleting all metrics."
+def clearData() {
+    if (dbg()) log.debug "Clearing volatile metrics (lifetime preserved)."
+    [
+        "feed_in", "self_consumption", "purchased", "consumption", "production", "power",
+        "last_day", "last_month", "last_year", "energy",
+        "grid_power", "load_power", "pv_power",
+        "storage_power", "storage_charge", "battery"
+    ].each { name -> sendEvent(name: name, value: 0) }
+    sendEvent(name: "storage_status", value: "unknown")
+    sendEvent(name: "storage_direction", value: "idle")
+    updateTiles()
+}
 
-  delayBetween([
-    sendEvent(name: "feed_in", value: 0),
-    sendEvent(name: "self_consumption", value: 0),
-    sendEvent(name: "purchased", value: 0),
-    sendEvent(name: "consumption", value: 0),
-    sendEvent(name: "production", value: 0),
-    sendEvent(name: "power", value: 0),
-    sendEvent(name: "last_day", value: 0),
-    sendEvent(name: "last_month", value: 0),
-    sendEvent(name: "last_year", value: 0),
-    sendEvent(name: "grid_power", value: "0 kW"),
-    sendEvent(name: "load_power", value: "0 kW"),
-    sendEvent(name: "pv_power", value: "0 kW"),
-    sendEvent(name: "energy_tile", value: ""),
-    sendEvent(name: "overview_tile", value: ""),
-    sendEvent(name: "power_flow_tile", value: ""),
-    sendEvent(name: "lifetime", value: 0)])
+def pollDispatcher() {
+    if (atomicState.authHalted) return
 
+    resetQuotaIfNewDay()
+    emitApiCallsToday()
+
+    boolean solarDay = isSolarDay()
+    if (settings.night_mode && atomicState.wasSolarDay == true && !solarDay) {
+        atomicState.nightEnergyDone = false
+    }
+    atomicState.wasSolarDay = solarDay
+
+    Map intervals = resolveIntervals()
+    boolean night = settings.night_mode && !solarDay
+
+    if (isEndpointDue("energy", intervals.energy)) {
+        if (spendCall("energy")) queryEnergyEndpoint()
+    }
+
+    if (!night) {
+        if (isEndpointDue("overview", intervals.overview)) {
+            if (spendCall("overview")) queryOverviewEndpoint()
+        }
+        if (isEndpointDue("powerFlow", intervals.powerFlow)) {
+            if (spendCall("powerFlow")) querySitePowerFlowEndpoint()
+        }
+    } else if (settings.night_mode && !atomicState.nightEnergyDone) {
+        if (spendCall("energy")) {
+            queryEnergyEndpoint()
+            atomicState.nightEnergyDone = true
+        }
+    }
+
+    updateDataAge()
     updateTiles()
 }
 
 def queryEnergyEndpoint() {
+    if (dbg()) log.debug "Gathering energy metrics."
+    markEndpointPolled("energy")
 
-  if (debug) log.debug "Gathering energy metrics."
+    String today = siteToday()
+    Map params = [
+        uri: settings.url,
+        path: "/site/${settings.site_id}/energyDetails",
+        query: [timeUnit: "DAY", startTime: "${today} 00:00:00", endTime: "${today} 23:59:59", api_key: settings.api_key],
+        timeout: 30,
+        contentType: "application/json"
+    ]
 
-  def today =  timeToday("00:00").format("YYYY-MM-dd")
-
-  def params = [
-    uri: "${settings.url}",
-    path: "/site/${settings.site_id}/energyDetails",
-    query: [timeUnit: "DAY", startTime: "${today} 00:00:00", endTime: "${today} 23:59:59", api_key: "${settings.api_key}"]
-  ]
-
-  try {
-    httpGet(params) { r ->
-
-      def meters = r.data.energyDetails.meters
-
-      if (debug) {
-        log.debug "Status: ${r.getStatus()}"
-        log.debug "Headers: ${r.getAllHeaders()}"
-        log.debug "Content Type: ${r.getContentType()}"
-        log.debug "Response: ${r.data}"
-        log.debug "meters: ${meters}"
-      }
-
-      meters.each { meter ->
-        switch(meter.type) {
-          case "FeedIn":
-            if (meter.values[0].value == null) meter.values[0].value = 0.0
-            sendEvent(name: "feed_in", value: meter.values[0].value)
-            if (debug) log.debug "feed_in: ${meter.values[0].value}"
-            break
-          case "SelfConsumption":
-            if (meter.values[0].value == null) meter.values[0].value = 0.0
-            sendEvent(name: "self_consumption", value: meter.values[0].value)
-            if (debug) log.debug "self_consumption: ${meter.values[0].value}"
-            break
-          case "Purchased":
-            if (meter.values[0].value == null) meter.values[0].value = 0.0
-            sendEvent(name: "purchased", value: meter.values[0].value)
-            if (debug) log.debug "purchased: ${meter.values[0].value}"
-            break
-          case "Consumption":
-            if (meter.values[0].value == null) meter.values[0].value = 0.0
-            sendEvent(name: "consumption", value: meter.values[0].value)
-            if (debug) log.debug "consumption: ${meter.values[0].value}"
-            break
-          case "Production":
-            if (meter.values[0].value == null) meter.values[0].value = 0.0
-            sendEvent(name: "production", value: meter.values[0].value)
-            if (debug) log.debug "production: ${meter.values[0].value}"
-            break
+    try {
+        httpGet(params) { resp ->
+            if (dbg()) log.debug "energyDetails status: ${resp.status}"
+            def meters = resp.data?.energyDetails?.meters
+            if (!meters) {
+                log.warn "energyDetails: empty meters array — preserving last-good values."
+                return
+            }
+            meters.each { meter ->
+                def value = meter?.values?.getAt(0)?.value
+                if (value == null) {
+                    if (dbg()) log.debug "${meter?.type}: no data yet — preserving last-good"
+                    return
+                }
+                switch (meter?.type) {
+                    case "FeedIn":
+                        emitCumulative("feed_in", value, "Wh")
+                        break
+                    case "SelfConsumption":
+                        emitCumulative("self_consumption", value, "Wh")
+                        break
+                    case "Purchased":
+                        emitCumulative("purchased", value, "Wh")
+                        break
+                    case "Consumption":
+                        emitCumulative("consumption", value, "Wh")
+                        break
+                    case "Production":
+                        emitCumulative("production", value, "Wh")
+                        break
+                }
+            }
+            markSuccess()
         }
-      }
+    } catch (Exception e) {
+        onFailure("energyDetails", e)
     }
-  } catch (Exception e) {
-    log.error "Exception"
-
-    if(e.getStatusCode()) {
-      switch(e.getStatusCode()) {
-          case 401:
-              log.error "401 - Not authorized"
-              break
-          case 403:
-              log.error "403 - Forbidden"
-              break
-          case 429:
-              log.error "429 - Too many requests"
-              break
-          default:
-              log.error "Unkown Error"
-              log.error "httpGet status code: e.getStatusCode ${e.getStatusCode()}"
-              log.error "httpGet message: e.message : ${e.message}"
-              log.error "httpGet full stack: e : ${e}"
-              break
-      }
-    }
-  }
-
-  updateTiles()
 }
 
 def queryOverviewEndpoint() {
+    if (dbg()) log.debug "Gathering overview metrics."
+    markEndpointPolled("overview")
 
-  if (debug) log.debug "Gathering overview metrics."
+    Map params = [
+        uri: settings.url,
+        path: "/site/${settings.site_id}/overview",
+        query: [api_key: settings.api_key],
+        timeout: 30,
+        contentType: "application/json"
+    ]
 
-  def params = [
-    uri: "${settings.url}",
-    path: "/site/${settings.site_id}/overview",
-    query: [api_key: "${settings.api_key}"]
-  ]
-
-  try {
-    httpGet(params) { r ->
-
-      if (debug) {
-        log.debug "Status: ${r.getStatus()}"
-        log.debug "Headers: ${r.getAllHeaders()}"
-        log.debug "Content Type: ${r.getContentType()}"
-        log.debug "Response: ${r.data}"
-      }
-
-      delayBetween([
-        sendEvent(name: "power", value: r.data.overview.currentPower.power),
-        sendEvent(name: "last_day", value: r.data.overview.lastDayData.energy),
-        sendEvent(name: "last_month", value: r.data.overview.lastMonthData.energy),
-        sendEvent(name: "last_year", value: r.data.overview.lastYearData.energy),
-        sendEvent(name: "lifetime", value: r.data.overview.lifeTimeData.energy)
-      ])
+    try {
+        httpGet(params) { resp ->
+            if (dbg()) log.debug "overview status: ${resp.status}"
+            def overview = resp.data?.overview
+            if (!overview) {
+                log.warn "overview: empty response — preserving last-good values."
+                return
+            }
+            emitNumber("power", overview?.currentPower?.power, 5, "W")
+            emitCumulative("last_day", overview?.lastDayData?.energy, "Wh")
+            emitCumulative("last_month", overview?.lastMonthData?.energy, "Wh")
+            emitCumulative("last_year", overview?.lastYearData?.energy, "Wh")
+            emitCumulative("lifetime", overview?.lifeTimeData?.energy, "Wh")
+            def dayWh = overview?.lastDayData?.energy
+            if (dayWh != null) {
+                emitNumber("energy", Math.round((dayWh as double) / 1000 * 1000) / 1000, 0.001, "kWh")
+            }
+            markSuccess()
+        }
+    } catch (Exception e) {
+        onFailure("overview", e)
     }
-  } catch (Exception e) {
-      log.error "Exception"
-
-      if(e.getStatusCode()) {
-        switch(e.getStatusCode()) {
-            case 401:
-                log.error "401 - Not authorized"
-                break
-            case 403:
-                log.error "403 - Forbidden"
-                break
-            case 429:
-                log.error "429 - Too many requests"
-                break
-            default:
-                log.error "Unkown Error"
-                log.error "httpGet status code: e.getStatusCode ${e.getStatusCode()}"
-                log.error "httpGet message: e.message : ${e.message}"
-                log.error "httpGet full stack: e : ${e}"
-                break
-      }
-    }
-  }
-
-  updateTiles()
 }
 
 def querySitePowerFlowEndpoint() {
+    if (dbg()) log.debug "Gathering site power flow data."
+    markEndpointPolled("powerFlow")
 
-  if (debug) log.debug "Gathering site power flow data."
+    Map params = [
+        uri: settings.url,
+        path: "/site/${settings.site_id}/currentPowerFlow",
+        query: [api_key: settings.api_key],
+        timeout: 30,
+        contentType: "application/json"
+    ]
 
-  def params = [
-    uri: "${settings.url}",
-    path: "/site/${settings.site_id}/currentPowerFlow",
-    query: [api_key: "${settings.api_key}"]
-  ]
+    try {
+        httpGet(params) { resp ->
+            if (dbg()) log.debug "currentPowerFlow status: ${resp.status}"
+            def flow = resp.data?.siteCurrentPowerFlow
+            if (!flow) {
+                log.warn "currentPowerFlow: empty response — preserving last-good values."
+                return
+            }
 
-  try {
-    httpGet(params) { r ->
+            String unit = flow?.unit
+            def conns = flow?.connections ?: []
+            boolean storageCharging = conns.any { it?.to?.toString()?.equalsIgnoreCase("STORAGE") }
+            boolean storageDischarging = conns.any { it?.from?.toString()?.equalsIgnoreCase("STORAGE") }
+            boolean gridImport = conns.any { it?.from?.toString()?.equalsIgnoreCase("GRID") }
+            boolean gridExport = conns.any { it?.from?.toString()?.equalsIgnoreCase("LOAD") && it?.to?.toString()?.equalsIgnoreCase("GRID") }
 
-      if (debug) {
-        log.debug "Status: ${r.getStatus()}"
-        log.debug "Headers: ${r.getAllHeaders()}"
-        log.debug "Content Type: ${r.getContentType()}"
-        log.debug "Response: ${r.data}"
-      }
-
-      delayBetween([
-        sendEvent(name: "grid_power", value: r.data.siteCurrentPowerFlow.GRID.currentPower + " " + r.data.siteCurrentPowerFlow.unit),
-        sendEvent(name: "load_power", value: r.data.siteCurrentPowerFlow.LOAD.currentPower + " " + r.data.siteCurrentPowerFlow.unit),
-        sendEvent(name: "pv_power", value: r.data.siteCurrentPowerFlow.PV.currentPower + " " + r.data.siteCurrentPowerFlow.unit)
-      ])
-
-      def storagePower = 0;
-      if(r.data.siteCurrentPowerFlow.STORAGE) {
-        delayBetween([
-          sendEvent(name: "storage_power", value: r.data.siteCurrentPowerFlow.STORAGE.currentPower + " " + r.data.siteCurrentPowerFlow.unit),
-          sendEvent(name: "storage_charge", value: r.data.siteCurrentPowerFlow.STORAGE.chargeLevel + "%"),
-          sendEvent(name: "battery", value: r.data.siteCurrentPowerFlow.STORAGE.chargeLevel + "%"),
-          sendEvent(name: "storage_status", value: r.data.siteCurrentPowerFlow.STORAGE.status)
-        ]);
-        storagePower = r.data.siteCurrentPowerFlow.STORAGE.currentPower;
-      }      
-      
-        
-      if (r.data.siteCurrentPowerFlow.PV.currentPower + storagePower - r.data.siteCurrentPowerFlow.LOAD.currentPower > 0) {
-          state.flow_direction = "green"
-      }
-      else {
-        state.flow_direction = "red"
-      }
+            if (flow?.PV) {
+                emitNumber("pv_power", toWatts(flow.PV?.currentPower, unit), 5, "W")
+            }
+            if (flow?.GRID) {
+                emitNumber("grid_power", toWatts(flow.GRID?.currentPower, unit), 5, "W")
+                state.flow_direction = gridExport ? "green" : (gridImport ? "red" : "gray")
+            }
+            if (flow?.LOAD) {
+                emitNumber("load_power", toWatts(flow.LOAD?.currentPower, unit), 5, "W")
+            }
+            if (flow?.STORAGE) {
+                BigDecimal mag = toWatts(flow.STORAGE?.currentPower, unit)
+                if (mag != null) {
+                    emitNumber("storage_power", storageCharging ? -mag : mag, 5, "W")
+                }
+                emitNumber("battery", flow.STORAGE?.chargeLevel, 1, "%")
+                emitNumber("storage_charge", flow.STORAGE?.chargeLevel, 1, "%")
+                emitString("storage_status", flow.STORAGE?.status)
+                emitString("storage_direction", storageCharging ? "charging" : (storageDischarging ? "discharging" : "idle"))
+                if (flow.STORAGE?.critical) {
+                    log.warn "Battery below critical SoC threshold (${flow.STORAGE?.chargeLevel}%)."
+                }
+            }
+            markSuccess()
+        }
+    } catch (Exception e) {
+        onFailure("currentPowerFlow", e)
     }
-  } catch (Exception e) {
-      log.error "Exception" + e
-
-      if(e.getStatusCode()) {
-        switch(e.getStatusCode()) {
-            case 401:
-                log.error "401 - Not authorized"
-                break
-            case 403:
-                log.error "403 - Forbidden"
-                break
-            case 429:
-                log.error "429 - Too many requests"
-                break
-            default:
-                log.error "Unkown Error"
-                log.error "httpGet status code: e.getStatusCode ${e.getStatusCode()}"
-                log.error "httpGet message: e.message : ${e.message}"
-                log.error "httpGet full stack: e : ${e}"
-                break
-      }
-    }
-  }
-
-  updateTiles()
 }
 
 def updateTiles() {
+    if (dbg()) log.debug "Updating tile information."
+    state.last_updated = new Date().format("yyyy-MM-dd HH:mm:ss", siteTimeZone())
+    boolean stale = isDataStale()
+    String staleNote = stale ? " <span style='color:#888;font-size:11px;'>(stale ${device.currentValue("dataAge") ?: "?"}s)</span>" : ""
 
-  if (debug) log.debug "Updating tile information."
+    String energyTile = "<div style='font-size:13px'><table width='100%'>"
+    if (settings.energy_title) energyTile += "<tr><td colspan='2' style='text-align:center'>${settings.energy_title}</td></tr>"
+    energyTile += tileRow("Production", formatEnergy(device.currentValue("production")), "green")
+    energyTile += tileRow("Consumption", formatEnergy(device.currentValue("consumption")), device.currentValue("production") < device.currentValue("consumption") ? "red" : "green")
+    energyTile += tileRow("Self Consumed", formatEnergy(device.currentValue("self_consumption")), "blue")
+    energyTile += tileRow("Import", formatEnergy(device.currentValue("purchased")), device.currentValue("feed_in") < device.currentValue("purchased") ? "red" : "green")
+    energyTile += tileRow("Exported", formatEnergy(device.currentValue("feed_in")), "green")
+    if (settings.display_last_updated) energyTile += "<tr><td colspan='2' style='text-align:center;font-size:11px'>Updated: ${state.last_updated}${staleNote}</td></tr>"
+    energyTile += attributionRow()
+    energyTile += "</table></div>"
+    emitTile("energy_tile", energyTile)
 
-  state.last_updated = new Date().format("YYYY-MM-dd HH:mm:ss")
-  
-  def production = device.currentValue("production")
-  def production_status = "red"
+    String overviewTile = "<div style='font-size:13px'><table width='100%'>"
+    if (settings.overview_title) overviewTile += "<tr><td colspan='2' style='text-align:center'>${settings.overview_title}</td></tr>"
+    overviewTile += tileRow("Today", formatEnergy(device.currentValue("last_day")), "green")
+    overviewTile += tileRow("Monthly", formatEnergy(device.currentValue("last_month")), "green")
+    overviewTile += tileRow("Yearly", formatEnergy(device.currentValue("last_year")), "green")
+    overviewTile += tileRow("Lifetime", formatEnergy(device.currentValue("lifetime")), "green")
+    if (settings.display_last_updated) overviewTile += "<tr><td colspan='2' style='text-align:center;font-size:11px'>Updated: ${state.last_updated}${staleNote}</td></tr>"
+    overviewTile += attributionRow()
+    overviewTile += "</table></div>"
+    emitTile("overview_tile", overviewTile)
 
-  if (device.currentValue("production") < device.currentValue("consumption"))
-  {
-      production_status = "green"
-  }
-
-  def energy_tile = "<div style='font-size: 13px;'><table width='100%'>"
-  if (settings.energy_title) energy_tile += "<tr><td style='text-align: center; width: 100%'>" + settings.energy_title + "</td></tr>"
-  energy_tile += "<tr><td style='text-align: left; width: 100%'>" + "Production: <span style='color: green;'>" + formatEnergy(device.currentValue("production")) + "</span></td></tr>"
-  energy_tile += "<tr><td style='text-align: left; width: 100%'>" + "Consumption: "
-
-  if (device.currentValue("production") < device.currentValue("consumption"))
-  {
-    energy_tile += "<span style='color: red;'>"
-  }
-  else
-  {
-    energy_tile += "<span style='color: green;'>"
-  }
-
-  energy_tile += formatEnergy(device.currentValue("consumption")) + "</span></td></tr>"
-  energy_tile += "<tr><td style='text-align: left; width: 100%'>" + "Self Consumed: <span style='color: blue;'>" + formatEnergy(device.currentValue("self_consumption")) + "</span></td></tr>"
-  energy_tile += "<tr><td style='text-align: left; width: 100%'>" + "Import: "
-
-  if (device.currentValue("feed_in") < device.currentValue("purchased"))
-  {
-    energy_tile += "<span style='color: red;'>"
-  }
-  else
-  {
-    energy_tile += "<span style='color: green;'>"
-  }
-
-  energy_tile += formatEnergy(device.currentValue("purchased")) + "</td></tr>"
-  energy_tile += "<tr><td style='text-align: left; width: 100%'>" + "Exported: <span style='color: green;'>" + formatEnergy(device.currentValue("feed_in")) + "</span></td></tr>"
-  if (settings.display_last_updated == true) energy_tile += "<tr><td style='text-align: center; width: 100%'><br />Last Updated: " + state.last_updated + "</td></tr>"
-  energy_tile += "</table></div>"
-
-  sendEvent(name: "energy_tile", value: energy_tile)
-
-  def overview_tile = "<div style='font-size: 15px;'><table width='100%'>"
-  if (settings.overview_title) overview_tile += "<tr><td style='text-align: center; width: 100%'>" + settings.overview_title + "</td></tr>"
-  overview_tile += "<tr><td style='text-align: left; width: 100%'>" + "Today: <span style='color: green;'>" + formatEnergy(device.currentValue("last_day")) + "</span></td></tr>"
-  overview_tile += "<tr><td style='text-align: left; width: 100%'>" + "Monthly <span style='color: green;'>" + formatEnergy(device.currentValue("last_month")) + "</span></td></tr>"
-  overview_tile += "<tr><td style='text-align: left; width: 100%'>" + "Yearly <span style='color: green;'>" + formatEnergy(device.currentValue("last_year")) + "</span></td></tr>"
-  overview_tile += "<tr><td style='text-align: left; width: 100%'>" + "Lifetime <span style='color: green;'>" + formatEnergy(device.currentValue("lifetime")) + "</span></td></tr>"
-  if (settings.display_last_updated == true) overview_tile += "<tr><td style='text-align: center; width: 100%'><br />Last Updated: " + state.last_updated + "</td></tr>"
-  overview_tile += "</table></div>"
-
-  sendEvent(name: "overview_tile", value: overview_tile)
-
-  def power_flow_tile = "<div style='font-size: 15px;'><table width='100%'>"
-  if (settings.power_flow_title) power_flow_tile += "<tr><td style='text-align: center; width: 100%'>" + settings.power_flow_title + "</td></tr>"
-  if (device.currentValue("pv_power")) power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Solar: <span style='color: green;'>" + device.currentValue("pv_power") + "</span></td></tr>"
-  if (device.currentValue("grid_power")) power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Grid: <span style='color: " + state.flow_direction + ";'>" + device.currentValue("grid_power") + "</span></td></tr>"
-  if (device.currentValue("storage_power")) power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Battery: <span style='color: green;'>" + device.currentValue("storage_power") + "</span></td></tr>"
-  if (device.currentValue("load_power")) power_flow_tile += "<tr><td style='text-align: left; width: 100%'>" + "Usage: <span style='color: red;'>" + device.currentValue("load_power") + "</span></td></tr>"
-  if (settings.display_last_updated == true) power_flow_tile += "<tr><td style='text-align: center; width: 100%'><br />Last Updated: " + state.last_updated + "</td></tr>"
-  power_flow_tile += "</table></div>"
-
-  sendEvent(name: "power_flow_tile", value: power_flow_tile)
+    String flowTile = "<div style='font-size:13px'><table width='100%'>"
+    if (settings.power_flow_title) flowTile += "<tr><td colspan='2' style='text-align:center'>${settings.power_flow_title}</td></tr>"
+    flowTile += tileRow("Solar", formatPower(device.currentValue("pv_power")), "green")
+    flowTile += tileRow("Grid", formatPower(device.currentValue("grid_power")), state.flow_direction ?: "gray")
+    if (device.currentValue("storage_power") != null) {
+        String battColor = device.currentValue("storage_direction") == "charging" ? "orange" : "green"
+        flowTile += tileRow("Battery", formatPower(device.currentValue("storage_power")), battColor)
+        flowTile += tileRow("SoC", "${device.currentValue("battery") ?: "—"}%", "blue")
+    }
+    flowTile += tileRow("Usage", formatPower(device.currentValue("load_power")), "red")
+    if (settings.display_last_updated) flowTile += "<tr><td colspan='2' style='text-align:center;font-size:11px'>Updated: ${state.last_updated}${staleNote}</td></tr>"
+    flowTile += attributionRow()
+    flowTile += "</table></div>"
+    emitTile("power_flow_tile", flowTile)
 }
 
-private formatEnergy(energy)
-{
-  if (energy < 1000) return energy + " Wh"
-  if (energy < 1000000) return Math.round((double) (energy/1000) * 100) / 100 + " kWh"
-  
-  return Math.round((double) (energy/1000/1000) * 100) / 100  + " MWh"
+// --- Quota ledger ---
+
+private void initializeState() {
+    if (!atomicState.quotaDate) atomicState.quotaDate = siteToday()
+    if (atomicState.quotaUsed == null) atomicState.quotaUsed = 0
+    if (atomicState.backoffUntil == null) atomicState.backoffUntil = 0L
+    if (atomicState.authHalted == null) atomicState.authHalted = false
+    if (atomicState.wasSolarDay == null) atomicState.wasSolarDay = true
+}
+
+private void resetQuotaIfNewDay() {
+    String today = siteToday()
+    if (atomicState.quotaDate != today) {
+        atomicState.quotaDate = today
+        atomicState.quotaUsed = 0
+        atomicState.backoffUntil = 0L
+        atomicState.failures = 0
+        atomicState.nightEnergyDone = false
+        if (dbg()) log.debug "Quota counter reset for site day ${today}"
+    }
+}
+
+private boolean spendCall(String tag) {
+    resetQuotaIfNewDay()
+    int budget = Math.min(280, (settings.daily_budget ?: 150) as int)
+    int used = (atomicState.quotaUsed ?: 0) as int
+    if (used >= budget) {
+        setApiStatus("quota_guard")
+        if (dbg()) log.debug "${tag}: daily budget exhausted (${used}/${budget})"
+        return false
+    }
+    long backoffUntil = (atomicState.backoffUntil ?: 0L) as long
+    if (now() < backoffUntil) {
+        if (dbg()) log.debug "${tag}: in backoff until ${new Date(backoffUntil)}"
+        return false
+    }
+    atomicState.quotaUsed = used + 1
+    emitApiCallsToday()
+    if (dbg()) log.debug "${tag}: spending call ${used + 1}/${budget}"
+    return true
+}
+
+private Map resolveIntervals() {
+    switch (settings.polling_intensity) {
+        case "Low":
+            return [energy: 60, overview: 60, powerFlow: 30]
+        case "High":
+            return [energy: 15, overview: 15, powerFlow: 10]
+        case "Custom":
+            return [
+                energy: (settings.energy_interval_minutes ?: 30) as int,
+                overview: (settings.overview_interval_minutes ?: 30) as int,
+                powerFlow: (settings.power_flow_interval_minutes ?: 15) as int
+            ]
+        default:
+            return [energy: 30, overview: 30, powerFlow: 15]
+    }
+}
+
+private boolean isEndpointDue(String endpoint, int intervalMinutes) {
+    String key = "lastPoll_${endpoint}"
+    Long last = atomicState[key] as Long
+    if (!last) return true
+    long elapsedMin = (now() - last) / 60000L
+    return elapsedMin >= intervalMinutes
+}
+
+private void markEndpointPolled(String endpoint) {
+    atomicState["lastPoll_${endpoint}"] = now()
+}
+
+// --- Error handling ---
+
+private void onFailure(String tag, Exception e) {
+    Integer statusCode = null
+    try { statusCode = e.getStatusCode() } catch (ignored) { }
+
+    String msg = redact(e.message)
+    switch (statusCode) {
+        case 401:
+        case 403:
+            log.error "${tag}: auth rejected (${statusCode}) — polling halted until settings are saved."
+            atomicState.authHalted = true
+            unschedule()
+            setApiStatus("auth_failed")
+            break
+        case 429:
+            int failures = ((atomicState.failures ?: 0) as int) + 1
+            atomicState.failures = failures
+            long mins = Math.min(480L, 15L * (1L << Math.min(5, failures - 1)))
+            if (msg?.toLowerCase()?.contains("daily limit") || msg?.toLowerCase()?.contains("quota")) {
+                atomicState.backoffUntil = endOfSiteDayMs()
+                log.warn "${tag}: daily quota exceeded — halted until site midnight. Calls today: ${atomicState.quotaUsed}"
+            } else {
+                atomicState.backoffUntil = now() + (mins * 60000L)
+                log.warn "${tag}: 429 rate limited — backing off ${mins} min. Calls today: ${atomicState.quotaUsed}"
+            }
+            setApiStatus("rate_limited")
+            break
+        default:
+            log.warn "${tag}: transient failure, holding last-good values — ${msg ?: e.getClass().getSimpleName()}"
+            setApiStatus("degraded")
+    }
+}
+
+private void markSuccess() {
+    atomicState.lastGoodPoll = now()
+    atomicState.failures = 0
+    setApiStatus("ok")
+    updateDataAge()
+}
+
+private String redact(String text) {
+    if (!text) return text
+    return text.replaceAll(/(?i)api_key=[^&\s]+/, "api_key=REDACTED")
+}
+
+// --- Emit helpers ---
+
+private void emitNumber(String name, def raw, BigDecimal deadband, String unit) {
+    if (raw == null) return
+    BigDecimal value = raw as BigDecimal
+    def previous = device.currentValue(name)
+    if (previous != null) {
+        try {
+            if (((previous as BigDecimal) - value).abs() < deadband) return
+        } catch (ignored) { }
+    }
+    Map evt = [name: name, value: value]
+    if (unit) evt.unit = unit
+    sendEvent(evt)
+}
+
+private void emitString(String name, String value) {
+    if (value == null) return
+    if (device.currentValue(name) == value) return
+    sendEvent(name: name, value: value)
+}
+
+private void emitCumulative(String name, def raw, String unit) {
+    if (raw == null) return
+    BigDecimal value = raw as BigDecimal
+    if (name == "lifetime") {
+        def previous = device.currentValue("lifetime")
+        if (previous != null && value < (previous as BigDecimal)) {
+            if (dbg()) log.debug "lifetime would decrease (${previous} -> ${value}), preserving last-good"
+            return
+        }
+    }
+    def previous = device.currentValue(name)
+    if (previous != null && previous == value) return
+    sendEvent(name: name, value: value, unit: unit)
+}
+
+private void emitTile(String name, String html) {
+    if (html.length() > 1024) {
+        log.warn "Tile ${name} exceeds 1024 characters (${html.length()}), truncating."
+        html = html.take(1020) + "..."
+    }
+    sendEvent(name: name, value: html)
+}
+
+private void emitApiCallsToday() {
+    int used = (atomicState.quotaUsed ?: 0) as int
+    if (device.currentValue("apiCallsToday") != used) {
+        sendEvent(name: "apiCallsToday", value: used)
+    }
+}
+
+private void setApiStatus(String status) {
+    if (device.currentValue("apiStatus") != status) {
+        sendEvent(name: "apiStatus", value: status)
+    }
+}
+
+private void updateDataAge() {
+    Long last = atomicState.lastGoodPoll as Long
+    if (!last) return
+    long ageSec = (now() - last) / 1000L
+    if (device.currentValue("dataAge") != ageSec) {
+        sendEvent(name: "dataAge", value: ageSec, unit: "s")
+    }
+}
+
+private boolean isDataStale() {
+    Long last = atomicState.lastGoodPoll as Long
+    if (!last) return true
+    Map intervals = resolveIntervals()
+    long maxIntervalMs = Math.max(intervals.energy, Math.max(intervals.overview, intervals.powerFlow)) * 60000L * 2
+    return (now() - last) > maxIntervalMs
+}
+
+// --- Unit and time helpers ---
+
+private BigDecimal toWatts(def raw, String unit) {
+    if (raw == null) return null
+    BigDecimal value = raw as BigDecimal
+    switch (unit?.toString()?.toUpperCase()) {
+        case "W":
+            return value
+        case "KW":
+            return value * 1000
+        case "MW":
+            return value * 1000000
+        default:
+            if (unit) log.warn "Unrecognized power unit '${unit}' — assuming W"
+            return value
+    }
+}
+
+private TimeZone siteTimeZone() {
+    if (settings.site_timezone?.trim()) {
+        return TimeZone.getTimeZone(settings.site_timezone.trim())
+    }
+    return location?.timeZone ?: TimeZone.getDefault()
+}
+
+private String siteToday() {
+    return new Date().format("yyyy-MM-dd", siteTimeZone())
+}
+
+private long endOfSiteDayMs() {
+    def cal = Calendar.getInstance(siteTimeZone())
+    cal.set(Calendar.HOUR_OF_DAY, 23)
+    cal.set(Calendar.MINUTE, 59)
+    cal.set(Calendar.SECOND, 59)
+    cal.set(Calendar.MILLISECOND, 999)
+    return cal.timeInMillis
+}
+
+private boolean isSolarDay() {
+    def sunrise = location?.sunrise
+    def sunset = location?.sunset
+    if (!sunrise || !sunset) return true
+    def nowDate = new Date()
+    return nowDate >= sunrise && nowDate <= sunset
+}
+
+private boolean dbg() {
+    return settings.debug && state.debugLogging != false
+}
+
+// --- Formatting ---
+
+private String tileRow(String label, String value, String color) {
+    return "<tr><td>${label}:</td><td><span style='color:${color}'>${value ?: "—"}</span></td></tr>"
+}
+
+private String attributionRow() {
+    return "<tr><td colspan='2' style='text-align:center;font-size:10px;padding-top:4px'><a href='https://www.solaredge.com' target='_blank'>SolarEdge</a></td></tr>"
+}
+
+private String formatEnergy(energy) {
+    if (energy == null) return "—"
+    double e = energy as double
+    if (e < 1000) return "${Math.round(e)} Wh"
+    if (e < 1000000) return "${Math.round((e / 1000) * 100) / 100} kWh"
+    return "${Math.round((e / 1000000) * 100) / 100} MWh"
+}
+
+private String formatPower(Number watts) {
+    if (watts == null) return "—"
+    double w = watts as double
+    double absW = Math.abs(w)
+    String sign = w < 0 ? "-" : ""
+    if (absW >= 1000) return "${sign}${Math.round((absW / 1000) * 100) / 100} kW"
+    return "${sign}${Math.round(absW)} W"
 }
