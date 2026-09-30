@@ -494,7 +494,7 @@ private void onFailure(String tag, Exception e) {
             setApiStatus("rate_limited")
             break
         default:
-            log.warn "${tag}: transient failure, holding last-good values — ${msg ?: e.getClass().getSimpleName()}"
+            log.warn "${tag}: transient failure, holding last-good values — ${msg ?: 'unknown error'}"
             setApiStatus("degraded")
     }
 }
